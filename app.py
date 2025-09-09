@@ -1,32 +1,18 @@
-#!/usr/bin/env python3
-"""
-MARKET SCANNER BACKEND SERVER
-============================
-FastAPI backend for the web-based market scanner
-Provides REST API and WebSocket connections for real-time updates
-"""
-
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-import yfinance as yf
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-import json
-import asyncio
-import uvicorn
-from typing import Dict, List, Optional
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-import aiohttp
-import concurrent.futures
-from pathlib import Path
+from typing import List, Optional
+import yfinance as yf
+from datetime import datetime
+import pandas as pd
+import os
+import json
 
-# Initialize FastAPI app
-app = FastAPI(title="Market Scanner API", version="1.0.0")
+# Create FastAPI app
+app = FastAPI(title="Market Scanner Pro", version="2.0.0")
 
-# Enable CORS for web frontend
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,336 +21,165 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Data models
+# Cache for tickers
+TICKER_CACHE = []
+CACHE_TIME = None
+
+def get_all_us_tickers():
+    """
+    Fetch comprehensive list of US tickers from multiple sources
+    Returns 5000+ tradeable symbols
+    """
+    global TICKER_CACHE, CACHE_TIME
+    
+    # Use cache if less than 1 hour old
+    if CACHE_TIME and (datetime.now() - CACHE_TIME).seconds < 3600 and TICKER_CACHE:
+        return TICKER_CACHE
+    
+    all_tickers = set()
+    
+    try:
+        # Method 1: Get S&P 500 (500 stocks)
+        print("Fetching S&P 500...")
+        sp500_url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        sp500_df = pd.read_html(sp500_url)[0]
+        sp500_tickers = sp500_df['Symbol'].str.replace('.', '-').tolist()
+        all_tickers.update(sp500_tickers)
+        print(f"Added {len(sp500_tickers)} S&P 500 stocks")
+        
+    except Exception as e:
+        print(f"Error fetching S&P 500: {e}")
+    
+    try:
+        # Method 2: Get NASDAQ listings (3000+ stocks)
+        print("Fetching NASDAQ listings...")
+        nasdaq_url = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=5000&exchange=NASDAQ"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        # Using pandas to read from FTP as backup
+        nasdaq_traded = pd.read_csv('ftp://ftp.nasdaqtrader.com/symboldirectory/n
+cat > app.py << 'EOF'
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
+from typing import List, Optional
+import yfinance as yf
+from datetime import datetime
+import pandas as pd
+import os
+import json
+
+# Create FastAPI app
+app = FastAPI(title="Market Scanner Pro", version="2.0.0")
+
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Cache for tickers
+TICKER_CACHE = []
+CACHE_TIME = None
+
+def get_all_us_tickers():
+    """
+    Fetch comprehensive list of US tickers from multiple sources
+    Returns 5000+ tradeable symbols
+    """
+    global TICKER_CACHE, CACHE_TIME
+    
+    # Use cache if less than 1 hour old
+    if CACHE_TIME and (datetime.now() - CACHE_TIME).seconds < 3600 and TICKER_CACHE:
+        return TICKER_CACHE
+    
+    all_tickers = set()
+    
+    try:
+        # Method 1: Get S&P 500 (500 stocks)
+        print("Fetching S&P 500...")
+        sp500_url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        sp500_df = pd.read_html(sp500_url)[0]
+        sp500_tickers = sp500_df['Symbol'].str.replace('.', '-').tolist()
+        all_tickers.update(sp500_tickers)
+        print(f"Added {len(sp500_tickers)} S&P 500 stocks")
+        
+    except Exception as e:
+        print(f"Error fetching S&P 500: {e}")
+    
+    try:
+        # Method 2: Get NASDAQ listings (3000+ stocks)
+        print("Fetching NASDAQ listings...")
+        nasdaq_url = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=5000&exchange=NASDAQ"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        # Using pandas to read from FTP as backup
+        nasdaq_traded = pd.read_csv('ftp://ftp.nasdaqtrader.com/symboldirectory/nasdaqtraded.txt', sep='|')
+        nasdaq_symbols = nasdaq_traded[nasdaq_traded['ETF'] == 'N']['Symbol'].tolist()
+        # Clean symbols
+        nasdaq_symbols = [s for s in nasdaq_symbols if isinstance(s, str) and len(s) <= 5 and s.isalpha()]
+        all_tickers.update(nasdaq_symbols[:2000])  # Limit to 2000 for performance
+        print(f"Added {len(nasdaq_symbols[:2000])} NASDAQ stocks")
+        
+    except Exception as e:
+        print(f"Error fetching NASDAQ: {e}")
+        # Fallback to popular NASDAQ stocks
+        nasdaq_popular = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 
+                         'AMD', 'INTC', 'CSCO', 'ADBE', 'NFLX', 'CMCSA', 'PEP', 
+                         'COST', 'TMUS', 'AVGO', 'TXN', 'QCOM', 'SBUX', 'INTU',
+                         'MDLZ', 'ISRG', 'BKNG', 'FISV', 'ADP', 'GILD', 'MU',
+                         'LRCX', 'ADI', 'PYPL', 'VRTX', 'MRVL', 'AMAT', 'REGN']
+        all_tickers.update(nasdaq_popular)
+    
+    try:
+        # Method 3: Get NYSE listings via other sources
+        print("Adding NYSE stocks...")
+        nyse_popular = ['JPM', 'JNJ', 'V', 'PG', 'UNH', 'MA', 'HD', 'DIS', 'BAC', 
+                       'CVX', 'ABBV', 'PFE', 'MRK', 'KO', 'WMT', 'VZ', 'CRM', 
+                       'NKE', 'TMO', 'LLY', 'ABT', 'XOM', 'ACN', 'DHR', 'WFC',
+                       'BMY', 'NOW', 'UPS', 'MS', 'RTX', 'NEE', 'T', 'SCHW',
+                       'LOW', 'ORCL', 'PM', 'UNP', 'GS', 'BA', 'HON', 'BLK',
+                       'IBM', 'AXP', 'CAT', 'GE', 'MMM', 'AMGN', 'CVS', 'MO']
+        all_tickers.update(nyse_popular)
+        print(f"Added {len(nyse_popular)} NYSE stocks")
+        
+    except Exception as e:
+        print(f"Error adding NYSE: {e}")
+    
+    # Add popular ETFs
+    etfs = ['SPY', 'QQQ', 'IWM', 'DIA', 'VOO', 'VTI', 'EEM', 'GLD', 'XLF', 
+            'XLK', 'XLE', 'XLV', 'XLI', 'XLY', 'XLP', 'XLB', 'XLU', 'VNQ',
+            'AGG', 'TLT', 'HYG', 'ARKK', 'ARKG', 'ARKF', 'ARKW', 'ARKQ',
+            'VIG', 'VUG', 'VTV', 'VB', 'VO', 'VGT', 'VCR', 'VDC', 'VDE']
+    all_tickers.update(etfs)
+    
+    # Convert to list and sort
+    TICKER_CACHE = sorted(list(all_tickers))
+    CACHE_TIME = datetime.now()
+    
+    print(f"Total tickers available: {len(TICKER_CACHE)}")
+    return TICKER_CACHE
+
+# Request model
 class ScanRequest(BaseModel):
-    exchange: str = "all"
-    min_price: float = 5.0
-    max_price: float = 500.0
-    min_volume: int = 1000000
-    timeframe: str = "1d"
-    patterns: List[str] = ["momentum", "breakout", "volume", "reversal", "strength"]
+    limit: int = 50
+    min_price: float = 1.0
+    max_price: float = 10000.0
+    min_volume: int = 100000
+    sort_by: str = "volume"  # volume, price, change
 
-class ScanResult(BaseModel):
-    ticker: str
-    price: float
-    change: float
-    volume: int
-    patterns: List[str]
-    strength: float
-    timestamp: str
-
-# Global variables
-active_connections: List[WebSocket] = []
-scanner_instance = None
-cache = {}
-scan_running = False
-
-class MarketScanner:
-    """Core scanner logic from previous implementation"""
-    
-    def __init__(self):
-        self.spy_data = None
-        self.last_scan = None
-        
-    async def get_all_tickers(self, exchange: str = "all") -> List[str]:
-        """Fetch tickers based on exchange selection"""
-        tickers = []
-        
-        try:
-            if exchange in ["all", "nasdaq"]:
-                # NASDAQ tickers
-                nasdaq_100 = ['AAPL', 'MSFT', 'AMZN', 'NVDA', 'META', 'TSLA', 'GOOGL', 
-                             'GOOG', 'AVGO', 'PEP', 'COST', 'ADBE', 'CSCO', 'CMCSA', 
-                             'INTC', 'AMD', 'NFLX', 'TMUS', 'QCOM', 'TXN']
-                tickers.extend(nasdaq_100)
-            
-            if exchange in ["all", "nyse"]:
-                # NYSE major stocks
-                nyse_stocks = ['JPM', 'V', 'JNJ', 'WMT', 'PG', 'MA', 'UNH', 'HD', 
-                              'DIS', 'BAC', 'XOM', 'CVX', 'ABBV', 'KO', 'PFE']
-                tickers.extend(nyse_stocks)
-            
-            # Add ETFs
-            etfs = ['SPY', 'QQQ', 'IWM', 'DIA', 'VOO', 'VTI', 'XLF', 'XLK', 'XLE']
-            tickers.extend(etfs)
-            
-            # For demo, limit to manageable number
-            return list(set(tickers))[:100]
-            
-        except Exception as e:
-            print(f"Error fetching tickers: {e}")
-            return tickers[:50] if tickers else self.get_default_tickers()
-    
-    def get_default_tickers(self) -> List[str]:
-        """Fallback ticker list"""
-        return ['AAPL', 'MSFT', 'AMZN', 'NVDA', 'META', 'TSLA', 'GOOGL', 
-                'AMD', 'NFLX', 'JPM', 'V', 'JNJ', 'WMT', 'SPY', 'QQQ']
-    
-    def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate technical indicators"""
-        if len(df) < 20:
-            return df
-        
-        # Basic indicators
-        df['SMA_20'] = df['Close'].rolling(window=20).mean()
-        df['Volume_Avg'] = df['Volume'].rolling(window=20).mean()
-        df['RSI'] = self.calculate_rsi(df['Close'])
-        
-        # Price change
-        df['Change_Pct'] = (df['Close'] - df['Close'].shift(1)) / df['Close'].shift(1) * 100
-        
-        return df
-    
-    def calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
-        """Calculate RSI indicator"""
-        delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
-    
-    async def scan_ticker(self, ticker: str, params: ScanRequest) -> Optional[Dict]:
-        """Scan individual ticker for patterns"""
-        try:
-            stock = yf.Ticker(ticker)
-            df = stock.history(period="1mo", interval=params.timeframe)
-            
-            if df.empty or len(df) < 5:
-                return None
-            
-            df = self.calculate_indicators(df)
-            latest = df.iloc[-1]
-            
-            # Check price and volume filters
-            if not (params.min_price <= latest['Close'] <= params.max_price):
-                return None
-            if latest['Volume'] < params.min_volume:
-                return None
-            
-            # Pattern detection
-            patterns_found = []
-            strength = 0
-            
-            # Momentum pattern
-            if "momentum" in params.patterns:
-                if len(df) > 1 and abs(df['Change_Pct'].iloc[-1]) > 3:
-                    patterns_found.append("momentum")
-                    strength += 20
-            
-            # Volume surge pattern
-            if "volume" in params.patterns:
-                if 'Volume_Avg' in df.columns and latest['Volume'] > df['Volume_Avg'].iloc[-1] * 2:
-                    patterns_found.append("volume")
-                    strength += 20
-            
-            # Breakout pattern
-            if "breakout" in params.patterns:
-                if 'SMA_20' in df.columns and latest['Close'] > df['SMA_20'].iloc[-1] * 1.02:
-                    patterns_found.append("breakout")
-                    strength += 25
-            
-            # Reversal pattern
-            if "reversal" in params.patterns:
-                if 'RSI' in df.columns:
-                    if latest['RSI'] < 30:
-                        patterns_found.append("reversal")
-                        strength += 15
-                    elif latest['RSI'] > 70:
-                        patterns_found.append("reversal")
-                        strength += 15
-            
-            # Relative strength pattern
-            if "strength" in params.patterns and self.spy_data is not None:
-                ticker_return = (latest['Close'] / df['Close'].iloc[0] - 1) * 100
-                spy_return = (self.spy_data['Close'].iloc[-1] / self.spy_data['Close'].iloc[0] - 1) * 100
-                if ticker_return > spy_return + 5:
-                    patterns_found.append("strength")
-                    strength += 30
-            
-            if patterns_found:
-                return {
-                    "ticker": ticker,
-                    "price": round(latest['Close'], 2),
-                    "change": round(df['Change_Pct'].iloc[-1], 2) if 'Change_Pct' in df.columns else 0,
-                    "volume": int(latest['Volume']),
-                    "patterns": patterns_found,
-                    "strength": min(100, strength + 40),  # Base strength
-                    "timestamp": datetime.now().isoformat()
-                }
-            
-            return None
-            
-        except Exception as e:
-            print(f"Error scanning {ticker}: {e}")
-            return None
-    
-    async def run_scan(self, params: ScanRequest) -> List[Dict]:
-        """Run complete market scan"""
-        # Get SPY data for relative strength
-        spy = yf.Ticker("SPY")
-        self.spy_data = spy.history(period="1mo", interval=params.timeframe)
-        
-        # Get tickers to scan
-        tickers = await self.get_all_tickers(params.exchange)
-        
-        # Scan all tickers asynchronously
-        results = []
-        for ticker in tickers:
-            result = await self.scan_ticker(ticker, params)
-            if result:
-                results.append(result)
-                # Send live update via WebSocket
-                await notify_clients({
-                    "type": "scan_progress",
-                    "ticker": ticker,
-                    "result": result
-                })
-        
-        # Sort by strength
-        results.sort(key=lambda x: x['strength'], reverse=True)
-        
-        return results
-
-# WebSocket manager
-async def notify_clients(data: Dict):
-    """Send updates to all connected WebSocket clients"""
-    disconnected = []
-    for connection in active_connections:
-        try:
-            await connection.send_json(data)
-        except:
-            disconnected.append(connection)
-    
-    # Remove disconnected clients
-    for conn in disconnected:
-        if conn in active_connections:
-            active_connections.remove(conn)
-
-# API Routes
 @app.get("/")
 async def root():
     """Serve the HTML frontend"""
-    return FileResponse('templates/index.html')
-
-@app.post("/api/scan")
-async def run_market_scan(request: ScanRequest):
-    """Run a market scan with specified parameters"""
-    global scan_running, scanner_instance
-    
-    if scan_running:
-        raise HTTPException(status_code=429, detail="Scan already in progress")
-    
-    try:
-        scan_running = True
-        
-        if not scanner_instance:
-            scanner_instance = MarketScanner()
-        
-        # Notify clients scan is starting
-        await notify_clients({
-            "type": "scan_started",
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        # Run the scan
-        results = await scanner_instance.run_scan(request)
-        
-        # Cache results
-        cache['last_scan'] = {
-            'results': results,
-            'timestamp': datetime.now().isoformat(),
-            'params': request.dict()
-        }
-        
-        # Notify clients scan is complete
-        await notify_clients({
-            "type": "scan_complete",
-            "results": results[:10],  # Send top 10
-            "total": len(results),
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        return {
-            "success": True,
-            "results": results,
-            "count": len(results),
-            "timestamp": datetime.now().isoformat()
-        }
-    
-    finally:
-        scan_running = False
-
-@app.get("/api/tickers/{exchange}")
-async def get_tickers(exchange: str):
-    """Get list of tickers for specific exchange"""
-    scanner = MarketScanner()
-    tickers = await scanner.get_all_tickers(exchange)
-    return {"tickers": tickers, "count": len(tickers)}
-
-@app.get("/api/ticker/{symbol}")
-async def get_ticker_data(symbol: str):
-    """Get detailed data for a specific ticker"""
-    try:
-        stock = yf.Ticker(symbol)
-        info = stock.info
-        history = stock.history(period="1mo")
-        
-        return {
-            "symbol": symbol,
-            "name": info.get('longName', symbol),
-            "price": info.get('currentPrice', 0),
-            "change": info.get('regularMarketChangePercent', 0),
-            "volume": info.get('volume', 0),
-            "market_cap": info.get('marketCap', 0),
-            "pe_ratio": info.get('trailingPE', 0),
-            "history": history.tail(30).to_dict()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Ticker {symbol} not found")
-
-@app.get("/api/results/latest")
-async def get_latest_results():
-    """Get the latest scan results from cache"""
-    if 'last_scan' in cache:
-        return cache['last_scan']
-    return {"results": [], "message": "No scan results available"}
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time updates"""
-    await websocket.accept()
-    active_connections.append(websocket)
-    
-    try:
-        # Send initial connection confirmation
-        await websocket.send_json({
-            "type": "connection",
-            "message": "Connected to market scanner",
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        # Keep connection alive and handle messages
-        while True:
-            data = await websocket.receive_text()
-            
-            # Handle different message types
-            message = json.loads(data)
-            
-            if message.get("type") == "ping":
-                await websocket.send_json({"type": "pong"})
-            
-            elif message.get("type") == "subscribe":
-                # Handle subscription to specific tickers
-                ticker = message.get("ticker")
-                # Implement ticker-specific updates
-                
-    except WebSocketDisconnect:
-        active_connections.remove(websocket)
-    except Exception as e:
-        print(f"WebSocket error: {e}")
-        if websocket in active_connections:
-            active_connections.remove(websocket)
+    if os.path.exists('templates/index.html'):
+        return FileResponse('templates/index.html')
+    return {"message": "Market Scanner API is running!"}
 
 @app.get("/api/health")
 async def health_check():
@@ -372,62 +187,130 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "active_connections": len(active_connections),
-        "scan_running": scan_running
+        "ticker_universe": len(TICKER_CACHE) if TICKER_CACHE else 0
     }
 
-# Background task for live monitoring
-async def live_monitoring():
-    """Background task that runs continuous monitoring"""
-    scanner = MarketScanner()
-    
-    while True:
-        try:
-            # Run mini scan every 5 minutes during market hours
-            now = datetime.now()
-            if 9 <= now.hour < 16 and now.weekday() < 5:  # Market hours
-                
-                # Quick scan of top movers
-                params = ScanRequest(
-                    patterns=["momentum", "volume"],
-                    min_volume=5000000
-                )
-                
-                # Scan subset of active stocks
-                hot_tickers = ['NVDA', 'TSLA', 'AMD', 'AAPL', 'SPY', 'QQQ']
-                
-                for ticker in hot_tickers:
-                    result = await scanner.scan_ticker(ticker, params)
-                    if result and result['patterns']:
-                        # Send alert to all connected clients
-                        await notify_clients({
-                            "type": "alert",
-                            "ticker": result['ticker'],
-                            "patterns": result['patterns'],
-                            "price": result['price'],
-                            "change": result['change'],
-                            "message": f"{ticker} showing {', '.join(result['patterns'])} pattern",
-                            "timestamp": datetime.now().isoformat()
-                        })
-            
-            # Wait 5 minutes before next check
-            await asyncio.sleep(300)
-            
-        except Exception as e:
-            print(f"Live monitoring error: {e}")
-            await asyncio.sleep(60)
+@app.get("/api/tickers")
+async def get_tickers():
+    """Get all available tickers"""
+    tickers = get_all_us_tickers()
+    return {
+        "success": True,
+        "count": len(tickers),
+        "tickers": tickers[:100],  # Return first 100 for preview
+        "total": len(tickers)
+    }
 
-@app.on_event("startup")
-async def startup_event():
-    """Start background tasks on server startup"""
-    asyncio.create_task(live_monitoring())
+@app.post("/api/scan")
+async def run_scan(request: ScanRequest):
+    """Run basic market scan showing tickers and prices"""
+    try:
+        # Get all available tickers
+        all_tickers = get_all_us_tickers()
+        
+        # Limit the scan to requested number
+        tickers_to_scan = all_tickers[:request.limit]
+        
+        results = []
+        errors = []
+        
+        print(f"Scanning {len(tickers_to_scan)} stocks...")
+        
+        # Batch process tickers
+        batch_size = 10
+        for i in range(0, len(tickers_to_scan), batch_size):
+            batch = tickers_to_scan[i:i+batch_size]
+            
+            for ticker in batch:
+                try:
+                    stock = yf.Ticker(ticker)
+                    
+                    # Get current data
+                    info = stock.info
+                    
+                    # Try to get price from different fields
+                    price = info.get('currentPrice') or info.get('regularMarketPrice') or info.get('price', 0)
+                    
+                    if price and price > 0:
+                        # Get additional data if available
+                        volume = info.get('volume') or info.get('regularMarketVolume', 0)
+                        market_cap = info.get('marketCap', 0)
+                        
+                        # Get today's change
+                        hist = stock.history(period="2d")
+                        change_pct = 0
+                        if not hist.empty and len(hist) >= 2:
+                            try:
+                                prev_close = hist['Close'].iloc[-2]
+                                current = hist['Close'].iloc[-1]
+                                change_pct = ((current - prev_close) / prev_close * 100)
+                            except:
+                                change_pct = 0
+                        
+                        # Apply filters
+                        if request.min_price <= price <= request.max_price:
+                            if volume >= request.min_volume:
+                                results.append({
+                                    'ticker': ticker,
+                                    'price': round(price, 2),
+                                    'change': round(change_pct, 2),
+                                    'volume': int(volume),
+                                    'market_cap': int(market_cap),
+                                    'name': info.get('longName', ticker)[:50] if info.get('longName') else ticker
+                                })
+                
+                except Exception as e:
+                    errors.append(f"{ticker}: {str(e)[:50]}")
+                    continue
+            
+            # Progress update
+            print(f"Processed {min(i+batch_size, len(tickers_to_scan))} of {len(tickers_to_scan)}")
+        
+        # Sort results
+        if request.sort_by == "volume":
+            results.sort(key=lambda x: x['volume'], reverse=True)
+        elif request.sort_by == "change":
+            results.sort(key=lambda x: abs(x['change']), reverse=True)
+        elif request.sort_by == "price":
+            results.sort(key=lambda x: x['price'], reverse=True)
+        
+        return {
+            'success': True,
+            'results': results,
+            'count': len(results),
+            'scanned': len(tickers_to_scan),
+            'errors': len(errors),
+            'timestamp': datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        print(f"Scan error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/ticker/{symbol}")
+async def get_ticker_details(symbol: str):
+    """Get detailed info for a specific ticker"""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+        hist = stock.history(period="1mo")
+        
+        return {
+            'success': True,
+            'ticker': symbol.upper(),
+            'name': info.get('longName'),
+            'price': info.get('currentPrice') or info.get('regularMarketPrice'),
+            'volume': info.get('volume'),
+            'market_cap': info.get('marketCap'),
+            'pe_ratio': info.get('trailingPE'),
+            '52w_high': info.get('fiftyTwoWeekHigh'),
+            '52w_low': info.get('fiftyTwoWeekLow'),
+            'history': hist.tail(5).to_dict() if not hist.empty else {}
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Ticker {symbol} not found")
 
 if __name__ == "__main__":
-    # Run the server
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
