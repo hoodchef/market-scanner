@@ -253,3 +253,87 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+# === Fast scan integration (non-breaking additive endpoint) ===
+from typing import Literal
+from pydantic import BaseModel
+import pandas as pd
+from fastapi import HTTPException
+
+try:
+    from market_data.yahoo_provider import YahooProvider
+except Exception as e:
+    print("YahooProvider import failed:", e)
+    YahooProvider = None
+
+# Single provider instance
+if 'DATA_PROVIDER' not in globals():
+    DATA_PROVIDER = YahooProvider(max_workers=24, batch_size=200) if YahooProvider else None
+
+class FastScanRequest(BaseModel):
+    limit: int = 300
+    min_price: float = 1.0
+    max_price: float = 10000.0
+    min_volume: int = 100000
+    sort_by: Literal['volume','price','change'] = 'volume'
+
+@app.post("/api/scan_fast")
+def scan_stocks_fast(request: FastScanRequest):
+    if DATA_PROVIDER is None:
+        raise HTTPException(500, "Data provider not available")
+    try:
+        # Reuse your existing universe builder
+        tickers = get_all_us_tickers()[: request.limit]
+
+        quotes = DATA_PROVIDER.get_quotes(tickers)
+        results, errors = [], []
+
+        for t in tickers:
+            q = quotes.get(t)
+            if not q:
+                errors.append(t)
+                continue
+
+            price = q.get("price")
+            volume = q.get("volume") or 0
+            prev_close = q.get("prev_close")
+
+            change_pct = None
+            if price is not None and prev_close not in (None, 0):
+                change_pct = round(((price - prev_close) / prev_close) * 100, 2)
+
+            if price is None:
+                continue
+            if not (request.min_price <= price <= request.max_price):
+                continue
+            if volume < request.min_volume:
+                continue
+
+            results.append({
+                "ticker": t,
+                "name": t,  # keep fast; we can enrich top-N later
+                "price": round(price, 2),
+                "change": change_pct,
+                "volume": int(volume),
+                "market_cap": None,  # omit for speed in step 1
+            })
+
+        key_map = {
+            "volume": lambda x: x.get("volume", 0),
+            "price":  lambda x: x.get("price", 0),
+            "change": lambda x: abs(x.get("change") or 0),
+        }
+        results.sort(key=key_map.get(request.sort_by, key_map["volume"]), reverse=True)
+
+        return {
+            "success": True,
+            "results": results,
+            "count": len(results),
+            "scanned": len(tickers),
+            "errors": len(errors),
+            "timestamp": pd.Timestamp.utcnow().isoformat(),
+            "engine": "scan_fast_v1"
+        }
+    except Exception as e:
+        print("scan_fast error:", e)
+        raise HTTPException(status_code=500, detail=str(e))
