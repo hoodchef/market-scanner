@@ -58,7 +58,7 @@ def get_all_us_tickers():
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         # Using pandas to read from FTP as backup
-        nasdaq_traded = pd.read_csv('ftp://ftp.nasdaqtrader.com/symboldirectory/n
+        nasdaq_traded = pd.read_csv('ftp://ftp.nasdaqtrader.com/symboldirectory/
 cat > app.py << 'EOF'
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
