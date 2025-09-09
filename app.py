@@ -57,70 +57,9 @@ def get_all_us_tickers():
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
-        # Using pandas to read from FTP as backup
-        nasdaq_traded = pd.read_csv('ftp://ftp.nasdaqtrader.com/symboldirectory/
-cat > app.py << 'EOF'
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
-from typing import List, Optional
-import yfinance as yf
-from datetime import datetime
-import pandas as pd
-import os
-import json
+            # Using pandas to read from FTP as backup
+        nasdaq_traded = pd.read_csv('ftp://ftp.nasdaqtrader.com/symboldirectory/nasdaqlisted.txt', sep='|')
 
-# Create FastAPI app
-app = FastAPI(title="Market Scanner Pro", version="2.0.0")
-
-# Enable CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Cache for tickers
-TICKER_CACHE = []
-CACHE_TIME = None
-
-def get_all_us_tickers():
-    """
-    Fetch comprehensive list of US tickers from multiple sources
-    Returns 5000+ tradeable symbols
-    """
-    global TICKER_CACHE, CACHE_TIME
-    
-    # Use cache if less than 1 hour old
-    if CACHE_TIME and (datetime.now() - CACHE_TIME).seconds < 3600 and TICKER_CACHE:
-        return TICKER_CACHE
-    
-    all_tickers = set()
-    
-    try:
-        # Method 1: Get S&P 500 (500 stocks)
-        print("Fetching S&P 500...")
-        sp500_url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        sp500_df = pd.read_html(sp500_url)[0]
-        sp500_tickers = sp500_df['Symbol'].str.replace('.', '-').tolist()
-        all_tickers.update(sp500_tickers)
-        print(f"Added {len(sp500_tickers)} S&P 500 stocks")
-        
-    except Exception as e:
-        print(f"Error fetching S&P 500: {e}")
-    
-    try:
-        # Method 2: Get NASDAQ listings (3000+ stocks)
-        print("Fetching NASDAQ listings...")
-        nasdaq_url = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=5000&exchange=NASDAQ"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        # Using pandas to read from FTP as backup
-        nasdaq_traded = pd.read_csv('ftp://ftp.nasdaqtrader.com/symboldirectory/nasdaqtraded.txt', sep='|')
         nasdaq_symbols = nasdaq_traded[nasdaq_traded['ETF'] == 'N']['Symbol'].tolist()
         # Clean symbols
         nasdaq_symbols = [s for s in nasdaq_symbols if isinstance(s, str) and len(s) <= 5 and s.isalpha()]
